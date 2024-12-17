@@ -52,6 +52,10 @@ UART_HandleTypeDef huart2;
 /* USER CODE BEGIN PV */
 uint16_t motor_count = 0;
 uint16_t encoder_count = 0;
+uint16_t pitch_min = 250;
+uint16_t pitch_max = 500;
+uint16_t count = 0;
+int16_t tmp = 1;
 
 /* USER CODE END PV */
 
@@ -82,9 +86,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   if (htim == &htim15)
   {
-    // encoder
+    // ---encoder
     encoder_count++;
-    if (encoder_count > 200)
+    if (encoder_count > 200 ) // 5Hz
     {
       encoder_count = 0;
       int16_t encoder_value= read_encoder_value();
@@ -93,18 +97,34 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       // printf("out(deg/s): %f\r\n", (float)encoder_value * 0.524476); // 1:78
     }
 
-    // motor
-    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 420);
-    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+    // ---motor
+    motor_count++;
+    if (motor_count > 50) // 20Hz
+    {
+      motor_count = 0;
+      // yaw
+      __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
+      HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
 
-    // __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, motor_count);
-    // HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-    // motor_count++;
-    // if (motor_count > 1000)
-    // {
-    //   motor_count = 0;
-    //   HAL_GPIO_TogglePin(RIGHT_MOTOR_PAHSE_GPIO_Port, RIGHT_MOTOR_PAHSE_Pin);
-    // }
+      // pitch
+      if (tmp > 0)
+      {
+        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, pitch_max); // 0~1250
+      }
+      else
+      {
+        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, pitch_min); // 0~1250
+      }
+      HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+    }
+
+    count++;
+    if (count > 1000) // 1Hz
+    {
+      count = 0;
+      tmp *= -1;
+    }
+
   }
 }
 /* USER CODE END 0 */
@@ -155,10 +175,8 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_SET);
-    HAL_Delay(3000);
-    HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_RESET);
-    HAL_Delay(3000);
+    HAL_GPIO_TogglePin(LD3_GPIO_Port, LD3_Pin);
+    HAL_Delay(50);
   }
   /* USER CODE END 3 */
 }
@@ -262,9 +280,9 @@ static void MX_TIM1_Init(void)
 
   /* USER CODE END TIM1_Init 1 */
   htim1.Instance = TIM1;
-  htim1.Init.Prescaler = 0;
+  htim1.Init.Prescaler = 16-1;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 65535;
+  htim1.Init.Period = 1250-1;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
