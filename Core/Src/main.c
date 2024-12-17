@@ -54,11 +54,12 @@ UART_HandleTypeDef huart2;
 /* USER CODE BEGIN PV */
 uint16_t motor_count = 0;
 uint16_t encoder_count = 0;
+
+float cmd_vel[2]; // yaw, pitch
+
 uint16_t pitch_min = 250;
 uint16_t pitch_max = 500;
-float cmd_vel[2]; // yaw, pitch
-uint16_t count = 0;
-int16_t tmp = 1;
+uint16_t pitch_output;
 
 /* USER CODE END PV */
 
@@ -83,8 +84,8 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
   uint8_t RxData[8];
   if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK)
   {
-    printf("id=%#x, [0]=%#x, [1]=%#x, [2]=%#x, [3]=%#x, [4]=%#x, [5]=%#x, [6]=%#x, [7]=%#x\r\n",
-      RxHeader.StdId, RxData[0], RxData[1], RxData[2], RxData[3], RxData[4], RxData[5], RxData[6], RxData[7]);
+    // printf("id=%#x, [0]=%#x, [1]=%#x, [2]=%#x, [3]=%#x, [4]=%#x, [5]=%#x, [6]=%#x, [7]=%#x\r\n",
+    //   RxHeader.StdId, RxData[0], RxData[1], RxData[2], RxData[3], RxData[4], RxData[5], RxData[6], RxData[7]);
 
     if (RxHeader.StdId == 0x712)
     {
@@ -108,7 +109,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
       );
       cmd_vel[1] = data.f;
 
-      printf("cmd_vel: [0]=%f, [1]=%f\r\n", cmd_vel[0], cmd_vel[1]);
+      // printf("cmd_vel: [0]=%f, [1]=%f\r\n", cmd_vel[0], cmd_vel[1]);
     }
   }
 }
@@ -132,7 +133,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       encoder_count = 0;
       int16_t encoder_value= read_encoder_value();
       // printf("enc_buff: %d\r\n", encoder_value);
-      // printf("out(deg/s): %f\r\n", (float)encoder_value * 0.524476); // 1:78
+      printf("curr_yaw_vel(deg/s): %f\r\n", (float)encoder_value * 0.524476 * 0.657895); // 1:78 25/38
     }
 
     // ---motor
@@ -141,28 +142,42 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     {
       motor_count = 0;
       // yaw
-      __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
-      HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
-
-      // pitch
-      if (tmp > 0)
+      uint16_t yaw_output;
+      if (cmd_vel[0] > 0)
       {
-        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, pitch_max); // 0~1250
+        yaw_output = (uint16_t)(300.0 * cmd_vel[0]);
+        HAL_GPIO_WritePin(YAW_MOTOR_PAHSE_GPIO_Port, YAW_MOTOR_PAHSE_Pin, GPIO_PIN_SET);
       }
       else
       {
-        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, pitch_min); // 0~1250
+        yaw_output = (uint16_t)(-300.0 * cmd_vel[0]);
+        HAL_GPIO_WritePin(YAW_MOTOR_PAHSE_GPIO_Port, YAW_MOTOR_PAHSE_Pin, GPIO_PIN_RESET);
       }
+      __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, yaw_output);
+      HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+      printf("yaw_output: %d\r\n", yaw_output);
+
+      // pitch
+      if (cmd_vel[1] > 0.001)
+      {
+        pitch_output -= 30;
+      }
+      else if(cmd_vel[1] < -0.001)
+      {
+        pitch_output += 30;
+      }
+      if (pitch_output < pitch_min)
+      {
+        pitch_output = pitch_min;
+      }
+      if (pitch_output > pitch_max)
+      {
+        pitch_output = pitch_max;
+      }
+      __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, pitch_output); // 0~1250
       HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+      printf("pitch_output: %d\r\n", pitch_output);
     }
-
-    count++;
-    if (count > 1000) // 1Hz
-    {
-      count = 0;
-      tmp *= -1;
-    }
-
   }
 }
 /* USER CODE END 0 */
