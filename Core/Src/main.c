@@ -23,6 +23,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -54,6 +56,7 @@ uint16_t motor_count = 0;
 uint16_t encoder_count = 0;
 uint16_t pitch_min = 250;
 uint16_t pitch_max = 500;
+float cmd_vel[2]; // yaw, pitch
 uint16_t count = 0;
 int16_t tmp = 1;
 
@@ -74,6 +77,42 @@ static void MX_TIM15_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
+{
+  CAN_RxHeaderTypeDef RxHeader;
+  uint8_t RxData[8];
+  if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK)
+  {
+    printf("id=%#x, [0]=%#x, [1]=%#x, [2]=%#x, [3]=%#x, [4]=%#x, [5]=%#x, [6]=%#x, [7]=%#x\r\n",
+      RxHeader.StdId, RxData[0], RxData[1], RxData[2], RxData[3], RxData[4], RxData[5], RxData[6], RxData[7]);
+
+    if (RxHeader.StdId == 0x712)
+    {
+      HAL_GPIO_TogglePin(LD3_GPIO_Port, LD3_Pin);
+      union {
+          float f;
+          int32_t ui;
+      } data;
+      data.ui = (int32_t) (
+            (((int32_t)RxData[0] << 24) & 0xFF000000)
+          | (((int32_t)RxData[1] << 16) & 0x00FF0000)
+          | (((int32_t)RxData[2] <<  8) & 0x0000FF00)
+          | (((int32_t)RxData[3] <<  0) & 0x000000FF)
+      );
+      cmd_vel[0] = data.f;
+      data.ui = (int32_t) (
+            (((int32_t)RxData[4] << 24) & 0xFF000000)
+          | (((int32_t)RxData[5] << 16) & 0x00FF0000)
+          | (((int32_t)RxData[6] <<  8) & 0x0000FF00)
+          | (((int32_t)RxData[7] <<  0) & 0x000000FF)
+      );
+      cmd_vel[1] = data.f;
+
+      printf("cmd_vel: [0]=%f, [1]=%f\r\n", cmd_vel[0], cmd_vel[1]);
+    }
+  }
+}
+
 int16_t read_encoder_value()
 {
   uint16_t enc_buff = TIM2->CNT;
@@ -92,8 +131,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     {
       encoder_count = 0;
       int16_t encoder_value= read_encoder_value();
-      printf("enc_buff: %d\r\n", encoder_value);
-      printf("out(deg/s): %f\r\n", (float)encoder_value * 1.20321); // 1:34
+      // printf("enc_buff: %d\r\n", encoder_value);
       // printf("out(deg/s): %f\r\n", (float)encoder_value * 0.524476); // 1:78
     }
 
@@ -166,6 +204,11 @@ int main(void)
   /* USER CODE BEGIN 2 */
   HAL_TIM_Base_Start_IT(&htim15);
   HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL);
+  HAL_CAN_Start(&hcan);
+  if (HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -239,11 +282,11 @@ static void MX_CAN_Init(void)
 
   /* USER CODE END CAN_Init 1 */
   hcan.Instance = CAN;
-  hcan.Init.Prescaler = 16;
+  hcan.Init.Prescaler = 2;
   hcan.Init.Mode = CAN_MODE_NORMAL;
   hcan.Init.SyncJumpWidth = CAN_SJW_1TQ;
-  hcan.Init.TimeSeg1 = CAN_BS1_1TQ;
-  hcan.Init.TimeSeg2 = CAN_BS2_1TQ;
+  hcan.Init.TimeSeg1 = CAN_BS1_7TQ;
+  hcan.Init.TimeSeg2 = CAN_BS2_2TQ;
   hcan.Init.TimeTriggeredMode = DISABLE;
   hcan.Init.AutoBusOff = DISABLE;
   hcan.Init.AutoWakeUp = DISABLE;
@@ -255,7 +298,25 @@ static void MX_CAN_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN CAN_Init 2 */
+  CAN_FilterTypeDef  filter;
+  uint32_t fId = 0x710 << 21;
+  uint32_t fMask = (0x7F0 << 21) | 0x4;
 
+  filter.FilterIdHigh         = fId >> 16;
+  filter.FilterIdLow          = fId;
+  filter.FilterMaskIdHigh     = fMask >> 16;
+  filter.FilterMaskIdLow      = fMask;
+  filter.FilterScale          = CAN_FILTERSCALE_32BIT;
+  filter.FilterFIFOAssignment = CAN_FILTER_FIFO0;
+  filter.FilterBank           = 0;
+  filter.FilterMode           = CAN_FILTERMODE_IDMASK;
+  filter.SlaveStartFilterBank = 14;
+  filter.FilterActivation     = ENABLE;
+
+  if (HAL_CAN_ConfigFilter(&hcan, &filter) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /* USER CODE END CAN_Init 2 */
 
 }
@@ -502,7 +563,7 @@ static void MX_USART2_UART_Init(void)
 
   /* USER CODE END USART2_Init 1 */
   huart2.Instance = USART2;
-  huart2.Init.BaudRate = 38400;
+  huart2.Init.BaudRate = 115200;
   huart2.Init.WordLength = UART_WORDLENGTH_8B;
   huart2.Init.StopBits = UART_STOPBITS_1;
   huart2.Init.Parity = UART_PARITY_NONE;
